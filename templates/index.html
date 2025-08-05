@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>DFQ zu Excel Konverter</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { color: #0056b3; }
+        .upload-form { margin-bottom: 2em; }
+        .logs { margin-top: 2em; padding: 1em; border: 1px solid #ddd; border-radius: 5px; background: #fafafa; white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow-y: auto; }
+        .error { color: #d9534f; font-weight: bold; }
+        .success { color: #5cb85c; font-weight: bold; }
+        .download-link { display: block; margin-top: 1em; padding: 0.8em 1.2em; background-color: #5cb85c; color: white; text-align: center; border-radius: 5px; text-decoration: none; font-weight: bold; }
+        .download-link:hover { background-color: #4cae4c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Q-DAS DFQ zu Excel Konverter</h1>
+        <p>Laden Sie Ihre DFQ-formatierte <code>.txt</code>-Datei hoch, um sie in eine Excel-Datei umzuwandeln.</p>
+        
+        <form method="post" enctype="multipart/form-data" class="upload-form">
+            <input type="file" name="file" required>
+            <button type="submit">Datei konvertieren</button>
+        </form>
+
+        {% if error %}
+            <p class="error">Fehler: {{ error }}</p>
+        {% endif %}
+
+        {% if logs %}
+            <h2>Verarbeitungs-Log:</h2>
+            <div class="logs">
+                {% for message in logs %}
+                    {{ message }}
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {% if download_file %}
+            <p class="success">🎉 Konvertierung erfolgreich abgeschlossen!</p>
+            <a href="{{ url_for('download_file', filename=download_file) }}" class="download-link">
+                Excel-Datei herunterladen ({{ download_file }})
+            </a>
+        {% endif %}
+    </div>
+</body>
+</html>

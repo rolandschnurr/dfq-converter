@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtuelle Umgebungen
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Lokale Konfigurationsdateien
+.env
+.flaskenv
+
+# Instanz-Ordner von Flask
+instance/
+
+# Generierte Dateien und Uploads
+/downloads/
+/uploads/
+
+# IDE- und Editor-spezifische Ordner
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Betriebssystem-spezifische Dateien
+.DS_Store
+Thumbs.db
