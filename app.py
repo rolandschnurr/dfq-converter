@@ -1,256 +1,597 @@
 # -*- coding: utf-8 -*-
-# ====================================
-# DFQ ZU EXCEL KONVERTER - FLASK ANWENDUNG
-# Version 4.3 - Nutzt Original-Dateinamen für den Export
-# ====================================
+"""
+Q-DAS DFQ ZU EXCEL KONVERTER - ERWEITERTE VERSION
+Version 5.0 - Verbesserte Robustheit und Batch-Verarbeitung
+Unterstützt alle .txt Dateien im Q-DAS ASCII Transferformat
+"""
 
 import os
 import re
+import traceback
 from datetime import datetime
 import pandas as pd
 import numpy as np
-from flask import Flask, request, render_template, send_from_directory, url_for
+from flask import Flask, request, render_template, send_from_directory, jsonify, send_file
+import zipfile
+from io import BytesIO
+from werkzeug.utils import secure_filename
 
 # --- FLASK KONFIGURATION ---
 app = Flask(__name__)
-# Ordner für temporär erstellte Excel-Dateien
-DOWNLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'downloads')
-if not os.path.exists(DOWNLOAD_FOLDER):
-    os.makedirs(DOWNLOAD_FOLDER)
-app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['DOWNLOAD_FOLDER'] = 'downloads'
 
-# --- Q-DAS K-FELD DEFINITIONEN ---
+# Erstelle Verzeichnisse falls nicht vorhanden
+for folder in [app.config['UPLOAD_FOLDER'], app.config['DOWNLOAD_FOLDER']]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+# --- ERWEITERTE Q-DAS K-FELD DEFINITIONEN ---
 K_FIELD_MAP = {
-    'K0001': 'Werte', 'K0002': 'Attribut', 'K0004': 'Zeit/Datum', 'K0005': 'Ereignisse',
-    'K0006': 'Chargennummer / Identnummer', 'K0007': 'Nestnummer / Spindelnummer',
-    'K0008': 'Prüfer', 'K0009': 'Text / Messungs-Info', 'K0014': 'Teile Ident',
-    'K0015': 'Untersuchungszweck', 'K0017': 'Prüfplanstatus', 'K0061': 'Katalog K0061',
-    'K0100': 'Gesamtanzahl Merkmale', 'K1001': 'Teil Nummer', 'K1002': 'Teil Bezeichnung',
-    'K1003': 'Teil Kurzbezeichnung', 'K1004': 'Änderungsstand Teil', 'K1010': 'Dokumentationspflicht',
-    'K1021': 'Hersteller Nummer Text', 'K1022': 'Hersteller Name', 'K1041': 'Zeichnungsnummer',
-    'K1042': 'Zeichnung Änderung', 'K1082': 'Maschine Bezeichnung', 'K1085': 'Maschine Standort',
-    'K1086': 'Arbeitsgang / Operation', 'K1103': 'Kostenstelle', 'K1203': 'Prüfgrund', 'K1222': 'Prüfername',
-    'K2001': 'Merkmal Nummer', 'K2002': 'Merkmal Bezeichnung', 'K2004': 'Merkmal Art',
-    'K2005': 'Merkmal Klasse', 'K2006': 'Dokumentationspflicht', 'K2007': 'Regelungsart',
-    'K2008': 'Gruppentyp', 'K2009': 'Messgröße', 'K2022': 'Nachkommastellen',
-    'K2101': 'Nennmaß / Sollwert', 'K2110': 'Untere Spezifikationsgrenze (USG)',
-    'K2111': 'Obere Spezifikationsgrenze (OSG)', 'K2112': 'Unteres Abmaß', 'K2113': 'Oberer Abmaß',
-    'K2120': 'Art der Grenze unten', 'K2121': 'Art der Grenze oben', 'K2142': 'Einheit Bezeichnung',
-    'K2152': 'Berechnete Toleranz', 'K2211': 'Normalnummer (Text)', 'K2212': 'Normalbezeichnung',
-    'K2213': 'Normal Istwert', 'K2401': 'Prüfmittel Nummer Text', 'K2402': 'Prüfmittel Bezeichnung',
-    'K2404': 'Prüfmittel Auflösung', 'K2410': 'Prüfort'
+    # Werteformate/Messwerte (K00xx)
+    'K0001': 'Werte',
+    'K0002': 'Attribut',
+    'K0004': 'Zeit/Datum',
+    'K0005': 'Ereignisse',
+    'K0006': 'Chargennummer/Identnummer',
+    'K0007': 'Nestnummer/Spindelnummer',
+    'K0008': 'Prüfer',
+    'K0009': 'Text/Messungs-Info',
+    'K0010': 'Maschine',
+    'K0011': 'Prozessparameter',
+    'K0012': 'Prüfmittel',
+    'K0014': 'Teile-Ident',
+    'K0015': 'Untersuchungszweck',
+    'K0016': 'Produktionsnummer',
+    'K0017': 'Werkstückträgernummer',
+    'K0020': 'Stichprobenumfang',
+    'K0021': 'Anzahl Fehler',
+    'K0053': 'Auftragsnummer',
+    'K0100': 'Gesamtanzahl Merkmale',
+    
+    # Teiledaten (K1xxx)
+    'K1001': 'Teil-Nummer',
+    'K1002': 'Teil-Bezeichnung',
+    'K1003': 'Teil-Kurzbezeichnung',
+    'K1004': 'Änderungsstand Teil',
+    'K1010': 'Dokumentationspflicht',
+    'K1015': 'Untersuchungsart',
+    'K1017': 'Prüfplanstatus',
+    'K1021': 'Hersteller-Nummer',
+    'K1022': 'Hersteller-Name',
+    'K1041': 'Zeichnungsnummer',
+    'K1042': 'Zeichnung-Änderung',
+    'K1081': 'Maschine-Nummer',
+    'K1082': 'Maschine-Bezeichnung',
+    'K1085': 'Maschine-Standort',
+    'K1086': 'Arbeitsgang/Operation',
+    'K1100': 'Standort',
+    'K1101': 'Abteilung',
+    'K1102': 'Arbeitsplatz',
+    'K1103': 'Kostenstelle',
+    'K1203': 'Prüfgrund',
+    'K1204': 'Prüfdatum',
+    'K1207': 'Prüfer-Info',
+    'K1222': 'Prüfername',
+    
+    # Merkmalsdaten (K2xxx)
+    'K2001': 'Merkmal-Nummer',
+    'K2002': 'Merkmal-Bezeichnung',
+    'K2004': 'Merkmal-Art',
+    'K2005': 'Merkmal-Klasse',
+    'K2006': 'Dokumentationspflicht',
+    'K2007': 'Regelungsart',
+    'K2008': 'Gruppentyp',
+    'K2009': 'Messgröße',
+    'K2011': 'Verteilungsart',
+    'K2022': 'Nachkommastellen',
+    'K2100': 'Sollwert/Zielwert',
+    'K2101': 'Nennmaß/Sollwert',
+    'K2110': 'Untere Spezifikationsgrenze (USG)',
+    'K2111': 'Obere Spezifikationsgrenze (OSG)',
+    'K2112': 'Unteres Abmaß',
+    'K2113': 'Oberes Abmaß',
+    'K2120': 'Art der Grenze unten',
+    'K2121': 'Art der Grenze oben',
+    'K2142': 'Einheit-Bezeichnung',
+    'K2152': 'Berechnete Toleranz',
+    'K2201': 'Auswerttyp',
+    'K2202': 'GC-Studie-Typ',
+    'K2205': 'Anzahl Teile',
+    'K2220': 'Anzahl Prüfer',
+    'K2221': 'Anzahl Messungen',
+    'K2222': 'Anzahl Referenzmessungen',
+    'K2302': 'Maschine-Bezeichnung',
+    'K2303': 'Prüfer-Bezeichnung',
+    'K2311': 'Fertigungsart',
+    'K2401': 'Prüfmittel-Nummer',
+    'K2402': 'Prüfmittel-Bezeichnung',
+    'K2404': 'Prüfmittel-Auflösung',
+    'K2410': 'Prüfort',
+    
+    # Strukturinformationen (K5xxx)
+    'K5001': 'Strukturtyp',
+    'K5002': 'Strukturbezeichnung',
+    
+    # QRK-Daten (K8xxx)
+    'K8500': 'Stichprobenumfang',
+    'K8501': 'Stichprobenart',
+    'K8503': 'Stichprobenart-attributiv'
 }
 
-# --- PARSING-LOGIK (Unverändert) ---
+# --- VERBESSERTE PARSING-LOGIK ---
 
-def parse_dfq_data(content, logs):
-    logs.append("📖 Starte Parsing gemäß Q-DAS Spezifikation...\n")
-    content = content.replace('\r\n', '\n').replace('\r', '\n')
-    lines = [line for line in content.strip().split('\n') if line.strip()]
-
-    header_lines, value_part_lines = [], []
-    header_finished = False
-
-    for i, line in enumerate(lines):
-        is_header_k_field = line.strip().startswith(('K0100', 'K1', 'K2'))
-        if not is_header_k_field and not header_finished:
-            header_finished = True
-        
-        if header_finished: value_part_lines.append(line)
-        else: header_lines.append(line)
-
-    header_info, characteristics = {}, {}
-    for line in header_lines: parse_k_code(line, header_info, characteristics)
-    
-    logs.append(f"   🔩 Header-Teil geparst: {len(header_info)} Felder.\n")
-    logs.append(f"   🎯 Merkmals-Definitionen geladen: {len(characteristics)} Merkmale.\n")
-
-    all_measurements, value_logs = parse_value_part(value_part_lines, characteristics)
-    logs.extend(value_logs)
-    
-    if not all_measurements: return None
-
-    return {
-        'header_info': header_info,
-        'characteristics': characteristics,
-        'measurements': all_measurements
-    }
-
-def parse_k_code(line, info_dict, characteristics_dict):
-    parts = line.strip().split(' ', 1)
-    if len(parts) < 2: return
-    code_part, value = parts[0], parts[1].strip()
-    
-    if '/' in code_part:
-        base_code, index_str = code_part.split('/')
-        if index_str.isdigit():
-            index = int(index_str)
-            if base_code.startswith('K2') and index > 0:
-                if index not in characteristics_dict: characteristics_dict[index] = {}
-                characteristics_dict[index][base_code] = value
-            else:
-                info_dict[code_part] = value
-    else:
-        info_dict[code_part] = value
-
-def parse_value_part(lines, characteristics):
-    logs = ["📖 Verarbeite Werteteil...\n"]
-    all_measurements = []
-    current_measurement_block = []
-    
-    for i, line in enumerate(lines):
-        if not line.strip().startswith('K'):
-            if current_measurement_block:
-                process_measurement_block(current_measurement_block, characteristics, all_measurements, logs)
-            current_measurement_block = [line]
-        else:
-            current_measurement_block.append(line)
-
-    if current_measurement_block:
-        process_measurement_block(current_measurement_block, characteristics, all_measurements, logs)
-
-    logs.append(f"   ✅ Werteteil verarbeitet: {len(all_measurements)} Messpunkte gefunden.\n")
-    return all_measurements, logs
-
-def process_measurement_block(block_lines, characteristics, all_measurements, logs):
-    if not block_lines: return
-    measurement_line = block_lines[0]
-    extra_k_lines = block_lines[1:]
-    
-    cleaned_line = measurement_line.replace('\x14', ' ').replace('#', ' ').replace('¤', ' ')
-    groups = re.findall(r'(\d+[\.,]?\d*)\s+(\d+)\s+([\d\.\/\s]+[\d:]+)', cleaned_line)
-    
-    if groups:
-        logs.append(f"    -> Zeile '{measurement_line[:40]}...' | Format 'Gruppen' erkannt.\n")
-        timestamp = pd.to_datetime(groups[0][2].replace('/', ' '), dayfirst=True, errors='coerce')
-        values = [(float(g[0].replace(',', '.')), int(g[1])) for g in groups]
-    else:
-        timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})', measurement_line)
-        if timestamp_match:
-            logs.append(f"    -> Zeile '{measurement_line[:40]}...' | Format 'Einzel-Zeitstempel' erkannt.\n")
-            timestamp = pd.to_datetime(timestamp_match.group(1))
-            raw_values = re.findall(r'(\d+[\.,]\d+)', measurement_line)
-            values = [(float(v.replace(',', '.')), 0) for v in raw_values]
-        else:
-            logs.append(f"    -> Zeile '{measurement_line[:40]}...' | KEIN bekanntes Messformat. Ignoriert.\n")
-            return
-
-    extra_info = {}
-    for k_line in extra_k_lines:
-        parts = k_line.strip().split(' ', 1)
-        if len(parts) == 2:
-            extra_info[parts[0]] = parts[1]
-
-    for i, (value, attr) in enumerate(values):
-        char_index = i + 1
-        char_name = characteristics.get(char_index, {}).get('K2002', f'Merkmal_{char_index}').strip()
-        
-        data_point = { 'Zeitstempel': timestamp, 'Merkmal': char_name, 'Wert': value, 'Attribut': attr }
-        data_point.update(extra_info)
-        all_measurements.append(data_point)
-
-# --- EXCEL-ERSTELLUNG (ANGEPASST FÜR FLASK) ---
-def create_excel_file(dfq_data, logs, original_filename): # <-- ÄNDERUNG HIER: original_filename hinzugefügt
-    """Erstellt eine Excel-Datei und gibt den Dateinamen sowie Log-Meldungen zurück."""
-    
-    # --- ÄNDERUNG HIER: Dateiname wird aus dem Originalnamen abgeleitet ---
-    base_filename, _ = os.path.splitext(original_filename)
-    excel_filename = f"{base_filename}.xlsx"
-    excel_filepath = os.path.join(app.config['DOWNLOAD_FOLDER'], excel_filename)
-    
-    logs.append(f"\n💾 Erstelle Excel-Datei: {excel_filename}\n")
-
+def parse_dfq_data(content, logs, filename=""):
+    """Parst Q-DAS DFQ-formatierte Daten mit verbesserter Fehlerbehandlung"""
     try:
-        df_measurements = pd.DataFrame(dfq_data['measurements'])
-        index_cols = [col for col in df_measurements.columns if col not in ['Merkmal', 'Wert']]
-        df_pivot = df_measurements.pivot_table(index=index_cols, columns='Merkmal', values='Wert').reset_index()
+        logs.append(f"📖 Starte Parsing für '{filename}'...\n")
         
-        renamed_columns = {col: K_FIELD_MAP.get(col.split('/')[0], col) for col in df_pivot.columns if col.startswith('K')}
-        df_pivot.rename(columns=renamed_columns, inplace=True)
-
-        logs.append(f"   📊 DataFrame erstellt: {df_pivot.shape[0]} Zeilen × {df_pivot.shape[1]} Spalten\n")
-
-        with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
-            df_pivot.to_excel(writer, sheet_name='Messwerte', index=False)
-            logs.append("  ✅ Sheet 'Messwerte' erstellt\n")
-            
-            df_measurements.to_excel(writer, sheet_name='Rohdaten', index=False)
-            logs.append("  ✅ Sheet 'Rohdaten' erstellt\n")
-            
-            numeric_pivot_cols = df_pivot.select_dtypes(include=np.number)
-            if not numeric_pivot_cols.empty:
-                stats_df = numeric_pivot_cols.describe()
-                stats_df.to_excel(writer, sheet_name='Statistiken', index=True)
-                logs.append("  ✅ Sheet 'Statistiken' erstellt\n")
-
-            char_info_list = []
-            for idx, char_data in sorted(dfq_data['characteristics'].items()):
-                info = {'Index': idx}
-                for code, value in char_data.items():
-                    info[K_FIELD_MAP.get(code, code)] = value
-                char_info_list.append(info)
-            if char_info_list:
-                pd.DataFrame(char_info_list).to_excel(writer, sheet_name='Merkmals-Info', index=False)
-                logs.append("  ✅ Sheet 'Merkmals-Info' erstellt\n")
-
-            header_info_list = []
-            if dfq_data.get('header_info'):
-                for code, value in dfq_data['header_info'].items():
-                    description = K_FIELD_MAP.get(code.split('/')[0], code)
-                    header_info_list.append({'Eigenschaft': description, 'K-Feld': code, 'Wert': value})
-            if header_info_list:
-                pd.DataFrame(header_info_list).to_excel(writer, sheet_name='Header-Info', index=False)
-                logs.append("  ✅ Sheet 'Header-Info' erstellt\n")
+        # Normalisiere Zeilenenden
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        lines = [line for line in content.strip().split('\n') if line.strip()]
         
-        return excel_filename
+        if not lines:
+            logs.append(f"⚠️ Datei '{filename}' ist leer oder enthält keine Daten.\n")
+            return None
+        
+        # Trenne Header und Werteteil
+        header_lines, value_part_lines = [], []
+        header_finished = False
+        
+        for line in lines:
+            # Erkenne Header-K-Felder
+            is_header_k_field = bool(re.match(r'^K[0-9]{4}', line.strip()))
+            
+            # Wechsel zum Werteteil wenn keine K-Felder mehr kommen
+            if not is_header_k_field and not header_finished and header_lines:
+                header_finished = True
+            
+            if header_finished:
+                value_part_lines.append(line)
+            else:
+                if is_header_k_field:
+                    header_lines.append(line)
+                elif header_lines:  # Wenn schon Header-Zeilen da sind
+                    header_finished = True
+                    value_part_lines.append(line)
+        
+        # Parse Header-Informationen
+        header_info, characteristics = parse_header(header_lines, logs)
+        
+        # Validiere Pflichtfelder
+        if not validate_required_fields(header_info, characteristics, logs):
+            logs.append(f"⚠️ Datei '{filename}' fehlen Pflichtfelder.\n")
+        
+        # Parse Werteteil
+        all_measurements = parse_value_part(value_part_lines, characteristics, logs)
+        
+        if not all_measurements:
+            logs.append(f"⚠️ Keine gültigen Messwerte in '{filename}' gefunden.\n")
+            return None
+        
+        logs.append(f"✅ Parsing von '{filename}' erfolgreich: {len(all_measurements)} Messwerte.\n")
+        
+        return {
+            'header_info': header_info,
+            'characteristics': characteristics,
+            'measurements': all_measurements,
+            'filename': filename
+        }
         
     except Exception as e:
-        logs.append(f"❌ Fehler beim Erstellen der Excel-Datei: {str(e)}\n")
+        logs.append(f"❌ Fehler beim Parsing von '{filename}': {str(e)}\n")
         return None
 
-# --- FLASK ROUTEN ---
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        logs = []
-        if 'file' not in request.files:
-            return render_template('index.html', error="Keine Datei im Request gefunden.")
-        
-        file = request.files['file']
-        if file.filename == '':
-            return render_template('index.html', error="Keine Datei ausgewählt.")
-
-        if file and file.filename.endswith('.txt'):
-            try:
-                logs.append(f"🔧 Starte Konvertierung für Datei: {file.filename}\n")
-                content = file.stream.read().decode("utf-8-sig")
+def parse_header(header_lines, logs):
+    """Parst Header-Informationen mit verbesserter Merkmalserkennung"""
+    header_info = {}
+    characteristics = {}
+    
+    for line in header_lines:
+        try:
+            parts = line.strip().split(' ', 1)
+            if len(parts) < 2:
+                continue
                 
-                dfq_data = parse_dfq_data(content, logs)
+            code_part, value = parts[0], parts[1].strip()
+            
+            # Behandle verschiedene K-Feld Formate
+            if '/' in code_part:
+                base_code, index_part = code_part.split('/', 1)
                 
-                if not dfq_data:
-                    return render_template('index.html', logs=logs, error="Keine gültigen Messdaten gefunden.")
-
-                # --- ÄNDERUNG HIER: Der originale Dateiname wird übergeben ---
-                excel_filename = create_excel_file(dfq_data, logs, file.filename)
-
-                if excel_filename:
-                    return render_template('index.html', logs=logs, download_file=excel_filename)
+                # Format: Kxxxx/merkmal_index oder Kxxxx/0 (für alle Merkmale)
+                if index_part.isdigit():
+                    index = int(index_part)
+                    
+                    # Merkmalsspezifische Daten
+                    if base_code.startswith('K2') and index > 0:
+                        if index not in characteristics:
+                            characteristics[index] = {}
+                        
+                        # Behandle mehrfache Werte mit Separator ¤
+                        if '¤' in value:
+                            values = value.split('¤')
+                            for i, val in enumerate(values, 1):
+                                if val.strip():
+                                    if i not in characteristics:
+                                        characteristics[i] = {}
+                                    characteristics[i][base_code] = val.strip()
+                        else:
+                            characteristics[index][base_code] = value
+                    else:
+                        header_info[code_part] = value
                 else:
-                    return render_template('index.html', logs=logs, error="Excel-Datei konnte nicht erstellt werden.")
+                    # Andere Formate (z.B. K00xx/CharNr/...)
+                    header_info[code_part] = value
+            else:
+                # Normale K-Felder ohne Index
+                if code_part.startswith('K2') and '¤' in value:
+                    # Mehrere Merkmale in einer Zeile
+                    values = value.split('¤')
+                    for i, val in enumerate(values, 1):
+                        if val.strip():
+                            if i not in characteristics:
+                                characteristics[i] = {}
+                            characteristics[i][code_part] = val.strip()
+                else:
+                    header_info[code_part] = value
+                    
+        except Exception as e:
+            logs.append(f"  ⚠️ Fehler beim Parsen der Header-Zeile: {line[:50]}... - {str(e)}\n")
+            continue
+    
+    logs.append(f"  📋 Header: {len(header_info)} Felder, {len(characteristics)} Merkmale definiert.\n")
+    return header_info, characteristics
 
-            except Exception as e:
-                return render_template('index.html', error=f"Ein unerwarteter Fehler ist aufgetreten: {e}")
+def validate_required_fields(header_info, characteristics, logs):
+    """Validiert Pflichtfelder gemäß Q-DAS Spezifikation"""
+    required_fields = {
+        'K0100': 'Gesamtanzahl Merkmale',
+        'K1001': 'Teilenummer',
+        'K1002': 'Teilebezeichnung'
+    }
+    
+    missing = []
+    for field, name in required_fields.items():
+        if field not in header_info:
+            missing.append(f"{field} ({name})")
+    
+    # Prüfe ob Merkmale definiert sind
+    if not characteristics:
+        missing.append("Merkmalsdefinitionen (K2xxx)")
+    
+    if missing:
+        logs.append(f"  ⚠️ Fehlende Pflichtfelder: {', '.join(missing)}\n")
+        return False
+    
+    return True
+
+def parse_value_part(lines, characteristics, logs):
+    """Parst Werteteil mit verschiedenen Formaterkennungen"""
+    all_measurements = []
+    
+    for line_num, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+            
+        # Überspringe K-Felder im Werteteil
+        if line.strip().startswith('K'):
+            # K-Felder im Werteteil können zusätzliche Informationen enthalten
+            continue
+        
+        # Versuche verschiedene Parsing-Strategien
+        measurements = parse_measurement_line(line, characteristics, line_num)
+        if measurements:
+            all_measurements.extend(measurements)
+    
+    return all_measurements
+
+def parse_measurement_line(line, characteristics, line_num):
+    """Parst eine einzelne Messwertezeile mit verschiedenen Formaterkennungen"""
+    measurements = []
+    
+    try:
+        # Bereinige die Zeile von Steuerzeichen
+        cleaned_line = line
+        for char in ['\x14', '\x0f', '¶', '¤']:
+            cleaned_line = cleaned_line.replace(char, ' ')
+        
+        # Format 1: Wert Attribut Datum/Zeit Ereignis
+        # Beispiel: 9.94 0 12.08.99/15:23:45 0
+        pattern1 = r'([-+]?\d*\.?\d+)\s+(\d+)\s+([\d\.\/]+[\s\/][\d:]+)'
+        matches = re.findall(pattern1, cleaned_line)
+        
+        if matches:
+            # Extrahiere Zeitstempel vom ersten Match
+            timestamp = None
+            for match in matches:
+                try:
+                    date_str = match[2]
+                    # Verschiedene Datumsformate unterstützen
+                    for fmt in ['%d.%m.%y/%H:%M:%S', '%d.%m.%Y %H:%M:%S', 
+                               '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S']:
+                        try:
+                            timestamp = pd.to_datetime(date_str.replace('/', ' '), format=fmt)
+                            break
+                        except:
+                            continue
+                    if timestamp:
+                        break
+                except:
+                    continue
+            
+            # Extrahiere alle Werte
+            for i, match in enumerate(matches):
+                try:
+                    value = float(match[0])
+                    attr = int(match[1])
+                    
+                    char_index = i + 1
+                    char_name = characteristics.get(char_index, {}).get('K2002', f'Merkmal_{char_index}')
+                    
+                    measurements.append({
+                        'Zeitstempel': timestamp if timestamp else pd.Timestamp.now(),
+                        'Merkmal': char_name,
+                        'Wert': value,
+                        'Attribut': attr,
+                        'Zeile': line_num
+                    })
+                except:
+                    continue
+        
+        # Format 2: Nur numerische Werte (getrennt durch Leerzeichen oder Tabs)
         else:
-            return render_template('index.html', error="Bitte laden Sie eine gültige .txt-Datei hoch.")
+            # Extrahiere alle numerischen Werte
+            numeric_pattern = r'[-+]?\d*\.?\d+'
+            values = re.findall(numeric_pattern, cleaned_line)
+            
+            if values:
+                timestamp = pd.Timestamp.now()
+                for i, val_str in enumerate(values):
+                    try:
+                        value = float(val_str)
+                        char_index = i + 1
+                        char_name = characteristics.get(char_index, {}).get('K2002', f'Merkmal_{char_index}')
+                        
+                        measurements.append({
+                            'Zeitstempel': timestamp,
+                            'Merkmal': char_name,
+                            'Wert': value,
+                            'Attribut': 0,  # Standard: gültiger Wert
+                            'Zeile': line_num
+                        })
+                    except:
+                        continue
+    
+    except Exception as e:
+        # Fehler still behandeln, da nicht alle Zeilen Messwerte enthalten müssen
+        pass
+    
+    return measurements
 
+# --- EXCEL-ERSTELLUNG ---
+
+def create_excel_file(dfq_data, output_filename=None):
+    """Erstellt eine Excel-Datei aus geparsten DFQ-Daten"""
+    
+    if not output_filename:
+        base_name = os.path.splitext(dfq_data.get('filename', 'output'))[0]
+        output_filename = f"{base_name}.xlsx"
+    
+    # Erstelle temporäre Datei im Memory
+    excel_buffer = BytesIO()
+    
+    try:
+        # Konvertiere Messungen zu DataFrame
+        df_measurements = pd.DataFrame(dfq_data['measurements'])
+        
+        if df_measurements.empty:
+            return None
+        
+        # Erstelle Pivot-Tabelle für bessere Übersicht
+        pivot_df = None
+        if 'Merkmal' in df_measurements.columns and 'Wert' in df_measurements.columns:
+            index_cols = [col for col in df_measurements.columns 
+                         if col not in ['Merkmal', 'Wert']]
+            if index_cols:
+                try:
+                    pivot_df = df_measurements.pivot_table(
+                        index=index_cols, 
+                        columns='Merkmal', 
+                        values='Wert',
+                        aggfunc='first'
+                    ).reset_index()
+                except:
+                    pass
+        
+        # Schreibe Excel-Datei
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            # Sheet 1: Pivot-Ansicht (wenn möglich)
+            if pivot_df is not None and not pivot_df.empty:
+                pivot_df.to_excel(writer, sheet_name='Messwerte', index=False)
+            
+            # Sheet 2: Rohdaten
+            df_measurements.to_excel(writer, sheet_name='Rohdaten', index=False)
+            
+            # Sheet 3: Statistiken
+            if pivot_df is not None:
+                numeric_cols = pivot_df.select_dtypes(include=np.number)
+                if not numeric_cols.empty:
+                    stats_df = numeric_cols.describe()
+                    stats_df.to_excel(writer, sheet_name='Statistiken')
+            
+            # Sheet 4: Merkmalsinformationen
+            if dfq_data.get('characteristics'):
+                char_data = []
+                for idx, char_info in dfq_data['characteristics'].items():
+                    row = {'Merkmal-Index': idx}
+                    for code, value in char_info.items():
+                        field_name = K_FIELD_MAP.get(code, code)
+                        row[field_name] = value
+                    char_data.append(row)
+                
+                if char_data:
+                    pd.DataFrame(char_data).to_excel(
+                        writer, sheet_name='Merkmals-Info', index=False
+                    )
+            
+            # Sheet 5: Header-Informationen
+            if dfq_data.get('header_info'):
+                header_data = []
+                for code, value in dfq_data['header_info'].items():
+                    field_name = K_FIELD_MAP.get(code.split('/')[0], code)
+                    header_data.append({
+                        'K-Feld': code,
+                        'Bezeichnung': field_name,
+                        'Wert': value
+                    })
+                
+                if header_data:
+                    pd.DataFrame(header_data).to_excel(
+                        writer, sheet_name='Header-Info', index=False
+                    )
+        
+        excel_buffer.seek(0)
+        return excel_buffer
+        
+    except Exception as e:
+        print(f"Fehler beim Erstellen der Excel-Datei: {str(e)}")
+        return None
+
+# --- BATCH-VERARBEITUNG ---
+
+def process_multiple_files(files, logs):
+    """Verarbeitet mehrere DFQ-Dateien"""
+    results = []
+    
+    for file in files:
+        try:
+            filename = secure_filename(file.filename)
+            logs.append(f"\n{'='*50}\n")
+            logs.append(f"📁 Verarbeite Datei: {filename}\n")
+            
+            # Lese Dateiinhalt
+            content = file.read().decode('utf-8-sig', errors='ignore')
+            
+            # Parse DFQ-Daten
+            dfq_data = parse_dfq_data(content, logs, filename)
+            
+            if dfq_data:
+                # Erstelle Excel-Datei
+                excel_buffer = create_excel_file(dfq_data)
+                if excel_buffer:
+                    results.append({
+                        'filename': filename,
+                        'excel_buffer': excel_buffer,
+                        'success': True
+                    })
+                    logs.append(f"✅ Excel-Datei für '{filename}' erfolgreich erstellt.\n")
+                else:
+                    results.append({
+                        'filename': filename,
+                        'success': False,
+                        'error': 'Excel-Erstellung fehlgeschlagen'
+                    })
+            else:
+                results.append({
+                    'filename': filename,
+                    'success': False,
+                    'error': 'Parsing fehlgeschlagen'
+                })
+                
+        except Exception as e:
+            logs.append(f"❌ Fehler bei '{file.filename}': {str(e)}\n")
+            results.append({
+                'filename': file.filename,
+                'success': False,
+                'error': str(e)
+            })
+    
+    return results
+
+# --- FLASK ROUTEN ---
+
+@app.route('/')
+def index():
+    """Hauptseite"""
     return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    """Verarbeitet hochgeladene Dateien"""
+    logs = []
+    
+    if 'files' not in request.files:
+        return jsonify({'error': 'Keine Dateien hochgeladen'}), 400
+    
+    files = request.files.getlist('files')
+    
+    # Filtere nur .txt Dateien
+    txt_files = [f for f in files if f.filename.endswith('.txt')]
+    
+    if not txt_files:
+        return jsonify({'error': 'Keine .txt Dateien gefunden'}), 400
+    
+    logs.append(f"🚀 Starte Verarbeitung von {len(txt_files)} Dateien...\n")
+    
+    # Verarbeite Dateien
+    results = process_multiple_files(txt_files, logs)
+    
+    # Zähle erfolgreiche Verarbeitungen
+    successful = [r for r in results if r['success']]
+    
+    if not successful:
+        return jsonify({
+            'error': 'Keine Dateien konnten erfolgreich verarbeitet werden',
+            'logs': logs
+        }), 400
+    
+    # Erstelle ZIP-Datei mit allen Excel-Dateien
+    if len(successful) > 1:
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for result in successful:
+                excel_name = os.path.splitext(result['filename'])[0] + '.xlsx'
+                zip_file.writestr(excel_name, result['excel_buffer'].getvalue())
+        
+        zip_buffer.seek(0)
+        
+        # Speichere ZIP temporär
+        zip_filename = f"dfq_excel_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        zip_path = os.path.join(app.config['DOWNLOAD_FOLDER'], zip_filename)
+        with open(zip_path, 'wb') as f:
+            f.write(zip_buffer.getvalue())
+        
+        return jsonify({
+            'success': True,
+            'download_url': f'/download/{zip_filename}',
+            'files_processed': len(successful),
+            'logs': logs
+        })
+    
+    # Einzelne Datei
+    elif len(successful) == 1:
+        result = successful[0]
+        excel_name = os.path.splitext(result['filename'])[0] + '.xlsx'
+        excel_path = os.path.join(app.config['DOWNLOAD_FOLDER'], excel_name)
+        
+        with open(excel_path, 'wb') as f:
+            f.write(result['excel_buffer'].getvalue())
+        
+        return jsonify({
+            'success': True,
+            'download_url': f'/download/{excel_name}',
+            'files_processed': 1,
+            'logs': logs
+        })
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Stellt die generierte Datei zum Download bereit."""
+    """Download-Route für generierte Dateien"""
     return send_from_directory(app.config['DOWNLOAD_FOLDER'], filename, as_attachment=True)
 
-# --- SKRIPT-AUSFÜHRUNG ---
+# --- HAUPTPROGRAMM ---
+
 if __name__ == '__main__':
-    # host='0.0.0.0' macht die App im lokalen Netzwerk erreichbar
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=True, host='0.0.0.0', port=5000)
