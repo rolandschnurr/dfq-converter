@@ -1,17 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-Q-DAS DFQ ZU EXCEL KONVERTER - VERSION 9.0 (Clean Code)
+Q-DAS DFQ ZU EXCEL KONVERTER - VERSION 10.0 (Clean Code & Documentation)
 
 Ein Flask-Webserver zur Konvertierung von Q-DAS ASCII-Transferformat-Dateien (.txt)
-in Excel-Dateien (.xlsx).
+in strukturierte Excel-Dateien (.xlsx).
 
-Unterstützt verschiedene Q-DAS-Dialekte, darunter:
-- BOSCH-Format (wissenschaftliche Notation, eine Messung pro Zeile, gefolgt von K0097 GUID)
-- MESSDATE-Format (mehrere Messungen pro Zeile, getrennt durch Leerzeichen)
-- MESSDATE-Format mit DC4-Steuerzeichen (\x14) als Trenner
+Dieses Skript ist darauf ausgelegt, verschiedene Dialekte des Q-DAS-Formats zu verarbeiten,
+was es robust für Daten aus unterschiedlichen Quellen macht.
 
-Die K-Feld-Definitionen werden aus einer externen Datei (k_fields.txt) geladen,
-um die Wartbarkeit zu erhöhen.
+Features:
+- **Web-Interface:** Einfacher Upload von einer oder mehreren Dateien über den Browser.
+- **Multi-Format-Parsing:** Erkennt und verarbeitet automatisch:
+  - BOSCH-Format (wissenschaftliche Notation, eine Messung pro Zeile, gefolgt von K0097 GUID).
+  - MESSDATE-Format (mehrere Messungen pro Zeile, getrennt durch Leerzeichen).
+  - MESSDATE-Format mit nicht-druckbaren DC4-Steuerzeichen (\x14) als Trenner.
+- **Externe Konfiguration:** K-Feld-Beschreibungen werden aus `k_fields.txt` geladen,
+  was eine einfache Anpassung ohne Code-Änderung ermöglicht.
+- **Strukturierter Excel-Export:** Erzeugt eine Excel-Datei mit mehreren Sheets:
+  - 'Messwerte': Die aufbereiteten Messdaten, bei Bedarf pivotiert.
+  - 'Statistiken': Eine deskriptive statistische Zusammenfassung der Messwerte.
+  - 'Merkmals-Info': Eine Übersicht der im Header definierten Merkmale.
+  - 'Header-Info': Eine komplette Liste aller K-Felder aus der Quelldatei.
+- **ZIP-Download:** Bietet bei mehreren hochgeladenen Dateien einen praktischen ZIP-Download an.
+
+Benötigte Dateien im selben Verzeichnis:
+- `k_fields.txt`: Definitionsdatei für K-Felder.
+- `templates/index.html`: HTML-Datei für das Web-Frontend.
 """
 
 # ==============================================================================
@@ -29,15 +43,18 @@ from io import BytesIO
 from werkzeug.utils import secure_filename
 
 # ==============================================================================
-# 2. FLASK APP KONFIGURATION
+# 2. KONSTANTEN UND FLASK APP KONFIGURATION
 # ==============================================================================
+# --- Flask App Initialisierung ---
 app = Flask(__name__)
+
+# --- Konfigurationen ---
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB max upload size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['DOWNLOAD_FOLDER'] = 'downloads'
 K_FIELD_DEFINITION_FILE = "k_fields.txt"
 
-# Erstelle notwendige Ordner, falls sie nicht existieren
+# --- Setup: Erstelle notwendige Ordner, falls sie nicht existieren ---
 for folder in [app.config['UPLOAD_FOLDER'], app.config['DOWNLOAD_FOLDER']]:
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -48,12 +65,14 @@ for folder in [app.config['UPLOAD_FOLDER'], app.config['DOWNLOAD_FOLDER']]:
 def load_k_field_map(filepath):
     """
     Lädt die K-Feld-Definitionen aus einer externen Textdatei im Format 'KEY = WERT'.
+    Dies ermöglicht eine einfache Anpassung der K-Feld-Beschreibungen ohne
+    Änderungen am Python-Code.
 
     Args:
-        filepath (str): Der Pfad zur Definitionsdatei.
+        filepath (str): Der Pfad zur Definitionsdatei (z.B. "k_fields.txt").
 
     Returns:
-        dict: Ein Wörterbuch mit den K-Feld-Definitionen.
+        dict: Ein Wörterbuch, das K-Feld-Schlüssel auf ihre Beschreibungen abbildet.
     """
     k_map = {}
     print(f"[INFO] Lade K-Feld Definitionen aus '{filepath}'...")
@@ -61,7 +80,7 @@ def load_k_field_map(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
-                # Ignore comments and empty lines
+                # Ignoriere Kommentare und leere Zeilen für eine saubere Konfigurationsdatei.
                 if not line or line.startswith('#'):
                     continue
                 if '=' in line:
@@ -73,7 +92,7 @@ def load_k_field_map(filepath):
     print(f"[INFO] {len(k_map)} K-Feld Definitionen erfolgreich geladen.")
     return k_map
 
-# Globale Variable für die K-Feld-Definitionen, wird beim Start geladen
+# Globale Variable für die K-Feld-Definitionen, wird beim Start des Servers geladen.
 K_FIELD_MAP = load_k_field_map(K_FIELD_DEFINITION_FILE)
 
 # ==============================================================================
@@ -81,20 +100,21 @@ K_FIELD_MAP = load_k_field_map(K_FIELD_DEFINITION_FILE)
 # ==============================================================================
 def parse_dfq_data(content, logs, filename=""):
     """
-    Hauptfunktion, die den gesamten Parsing-Prozess für eine Datei steuert.
+    Hauptfunktion, die den gesamten Parsing-Prozess für den Inhalt einer Datei steuert.
 
     Args:
-        content (str): Der Inhalt der hochgeladenen Datei als String.
+        content (str): Der gesamte Inhalt der hochgeladenen Datei als String.
         logs (list): Eine Liste zur Sammlung von Log-Nachrichten für das Frontend.
-        filename (str): Der Name der Datei für die Log-Ausgaben.
+        filename (str): Der Name der Datei (wird für Log-Ausgaben verwendet).
 
     Returns:
-        dict or None: Ein Wörterbuch mit den geparsten Daten oder None bei einem Fehler.
+        dict or None: Ein Wörterbuch mit den geparsten Daten (`header_info`,
+                      `characteristics`, `measurements`) oder None bei einem schweren Fehler.
     """
     try:
         logs.append(f"\n📖 Starte Parsing für '{filename}'...\n")
         
-        # Normalize line endings
+        # Normalisiere Zeilenenden, um plattformunabhängig zu sein.
         content = content.replace('\r\n', '\n').replace('\r', '\n')
         lines = content.strip().split('\n')
         
@@ -123,19 +143,19 @@ def parse_dfq_data(content, logs, filename=""):
 def parse_file_content(lines, logs):
     """
     Iteriert durch die Zeilen einer Datei und leitet sie an den K-Feld-
-    oder Messwert-Parser weiter.
+    oder Messwert-Parser weiter. Dies ist die zentrale Steuerungsschleife des Parsers.
 
     Args:
-        lines (list): Die Zeilen der Datei.
+        lines (list): Die Zeilen der Datei als Liste von Strings.
         logs (list): Eine Liste zur Sammlung von Log-Nachrichten.
 
     Returns:
-        tuple: Enthält header_info, characteristics und measurements.
+        tuple: Ein Tupel, das (header_info, characteristics, measurements) enthält.
     """
     header_info = {}
     characteristics = {}
     measurements = []
-    measurement_event_id = 1  # Eindeutiger Zähler für jede Messwert-Zeile
+    measurement_event_id = 1  # Eindeutiger Zähler für jede Messwert-ZEILE, um Duplikate zu verhindern.
 
     i = 0
     while i < len(lines):
@@ -144,7 +164,7 @@ def parse_file_content(lines, logs):
             i += 1
             continue
         
-        # K0097 (GUID) gehört zur vorherigen Messung und wird speziell behandelt
+        # Spezielle Behandlung für K0097 (GUID): Es gehört zur vorherigen Messung.
         if line.startswith('K0097'):
             if measurements:
                 parts = line.split(' ', 1)
@@ -157,23 +177,22 @@ def parse_file_content(lines, logs):
         if line.startswith('K') and re.match(r'^K\d{4}', line[:5]):
             parse_k_field(line, header_info, characteristics)
             i += 1
-        # Alles andere ist potenziell eine Messwertzeile
+        # Alles andere wird als potenzielle Messwertzeile behandelt
         else:
             result = parse_measurement_line(line, characteristics, measurement_event_id)
             if result:
                 measurements.extend(result)
-                measurement_event_id += 1
+                measurement_event_id += 1  # Zähler nur erhöhen, wenn die Zeile erfolgreich war.
             i += 1
             
     return header_info, characteristics, measurements
 
 def parse_k_field(line, header_info, characteristics):
     """
-    Parst eine einzelne K-Feld-Zeile und ordnet sie entweder den allgemeinen
-    Header-Informationen oder den spezifischen Merkmalen zu.
+    Parst eine einzelne K-Feld-Zeile und ordnet sie den entsprechenden Datenstrukturen zu.
 
     Args:
-        line (str): Die zu parsende Zeile.
+        line (str): Die zu parsende Zeile (z.B. "K2001/1 Durchmesser").
         header_info (dict): Wörterbuch für allgemeine Header-Daten.
         characteristics (dict): Wörterbuch für merkmalsbezogene Daten.
     """
@@ -183,20 +202,20 @@ def parse_k_field(line, header_info, characteristics):
         
         k_code_full, value = parts[0], parts[1].strip()
         
-        # Speichere jedes K-Feld im Header für eine vollständige Referenz
+        # Speichere jedes K-Feld im Header für eine vollständige Referenz im Excel-Export.
         header_info[k_code_full] = value
         
         # Behandle indexierte Felder (z.B. K2001/1)
         if '/' in k_code_full:
             base_code, index_str = k_code_full.split('/', 1)
-            # Nur K2xxx-Felder gehören zu den 'characteristics'
+            # Nur K2xxx-Felder werden als merkmals-spezifisch behandelt.
+            # K1xxx/n bezieht sich auf das Teil n, nicht auf ein Merkmal.
             if base_code.startswith('K2') and index_str.isdigit():
                 idx = int(index_str)
                 if idx not in characteristics: characteristics[idx] = {}
                 characteristics[idx][base_code] = value
     except Exception:
-        # Fehler leise ignorieren, um den Prozess nicht zu stoppen
-        pass
+        pass # Fehler leise ignorieren, um den Prozess nicht zu stoppen.
 
 def parse_measurement_line(line, characteristics, event_id):
     """
@@ -213,7 +232,7 @@ def parse_measurement_line(line, characteristics, event_id):
     """
     # HINWEIS: DC4-Steuerzeichen (\x14)
     # Einige Q-DAS-Systeme verwenden dieses nicht-druckbare Zeichen anstelle 
-    # eines Leerzeichens als Trenner. Der Regex berücksichtigt beides.
+    # eines Leerzeichens als Trenner. Der Regex `[\s\x14]+` berücksichtigt beides.
     messdate_pattern = re.compile(
         r'([-+]?\d+\.?\d*)'                                    # Gruppe 1: Der Messwert
         r'[\s\x14]+'                                           # Trenner: Whitespace ODER DC4
@@ -240,14 +259,15 @@ def parse_measurement_line(line, characteristics, event_id):
         if measurements:
             return measurements
 
-    # Fallback-Parser für BOSCH-Format
+    # Fallback-Parser für BOSCH-Format (wissenschaftliche Notation)
     bosch_pattern = re.compile(r'^\s*([-+]?\d*\.?\d+[Ee][+-]?\d+)\s+(\d+)\s+(.*)')
     match = bosch_pattern.match(line)
     if match:
         try:
             value_str, attr_str, rest = match.groups()
-            merkmal_info = characteristics.get(1, {}) # BOSCH-Format hat oft nur ein Merkmal pro Datei
-            merkmal_name = merkmal_info.get('K2002/1', merkmal_info.get('K2002', 'N/A'))
+            # BOSCH-Format hat oft nur ein Merkmal pro Datei, daher Index 1.
+            merkmal_info = characteristics.get(1, {})
+            merkmal_name = merkmal_info.get('K2002', 'N/A')
             return [{'Event-ID': event_id, 'Wert': float(value_str), 'Attribut': int(attr_str), 'Zeitstempel': extract_timestamp(rest), 'Merkmal': merkmal_name}]
         except (ValueError, IndexError):
             return None
@@ -257,7 +277,7 @@ def parse_measurement_line(line, characteristics, event_id):
 def extract_timestamp(text):
     """Extrahiert ein Datum aus einem Text-String und gibt ein Pandas-Timestamp-Objekt zurück."""
     try:
-        # Pandas ist sehr gut darin, verschiedene Datumsformate automatisch zu erkennen
+        # pd.to_datetime ist sehr flexibel und erkennt die meisten gängigen Formate.
         return pd.to_datetime(text, dayfirst=True, errors='coerce')
     except Exception:
         return pd.NaT
@@ -267,7 +287,8 @@ def extract_timestamp(text):
 # ==============================================================================
 def create_excel_file(dfq_data):
     """
-    Erstellt eine Excel-Datei im Speicher aus den geparsten DFQ-Daten.
+    Erstellt eine Excel-Datei im Arbeitsspeicher aus den geparsten DFQ-Daten.
+    Die Datei enthält mehrere Blätter für eine klare und umfassende Darstellung.
 
     Args:
         dfq_data (dict): Das Wörterbuch, das von parse_dfq_data zurückgegeben wird.
@@ -281,24 +302,23 @@ def create_excel_file(dfq_data):
         if df_measurements.empty:
             return None
 
-        # Füge Teil-Informationen hinzu, bevor weiterverarbeitet wird
+        # Füge Teil-Informationen hinzu. Sucht zuerst nach indexierten, dann nach allgemeinen Feldern.
         teil_nr = dfq_data['header_info'].get('K1001/1', dfq_data['header_info'].get('K1001', 'N/A'))
         teil_bez = dfq_data['header_info'].get('K1002/1', dfq_data['header_info'].get('K1002', 'N/A'))
         df_measurements['Teil-Nr'] = teil_nr
         df_measurements['Teil-Bez'] = teil_bez
         
-        # Entscheide, ob eine Pivot-Tabelle sinnvoll ist.
-        # Dies ist der Fall, wenn eine Messwertzeile (identifiziert durch Event-ID)
-        # Daten für mehrere verschiedene Merkmale enthält.
+        # Entscheide, ob eine Pivot-Tabelle sinnvoll ist (nur bei mehreren Merkmalen pro Zeile).
         is_multi_feature_per_event = df_measurements.groupby('Event-ID')['Merkmal'].nunique().max() > 1
         
         if is_multi_feature_per_event:
+            # Pivotieren, um Messwerte für verschiedene Merkmale in einer Zeile darzustellen.
             df_display = df_measurements.pivot_table(index=['Event-ID', 'Zeitstempel', 'Teil-Nr', 'Teil-Bez'], 
                                                      columns='Merkmal', values='Wert').reset_index()
-            df_display.columns.name = None
+            df_display.columns.name = None # Entfernt den Index-Namen über den Merkmalspalten
             df_display = df_display.rename(columns={'Event-ID': 'Messung Nr.'})
         else:
-            # Für Formate wie BOSCH ist kein Pivot nötig
+            # Kein Pivot nötig, jede Messung ist bereits eine eigene Zeile.
             df_display = df_measurements.rename(columns={'Event-ID': 'Messung Nr.'})
         
         df_display = df_display.sort_values('Messung Nr.').round(6)
@@ -346,7 +366,7 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
-    """Verarbeitet die hochgeladenen Dateien."""
+    """Verarbeitet die hochgeladenen Dateien und gibt eine JSON-Antwort zurück."""
     logs = []
     if 'files' not in request.files:
         return jsonify({'error': 'Keine Dateien hochgeladen'}), 400
@@ -406,7 +426,7 @@ def upload_files():
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Stellt die generierte Datei zum Download bereit."""
+    """Stellt die generierte Datei (Excel oder ZIP) zum Download bereit."""
     return send_from_directory(app.config['DOWNLOAD_FOLDER'], filename, as_attachment=True)
 
 # ==============================================================================
@@ -414,7 +434,10 @@ def download_file(filename):
 # ==============================================================================
 if __name__ == '__main__':
     print("="*60)
-    print("Q-DAS DFQ zu Excel Konverter v9.0 (Clean Code)")
-    print(f"Server läuft auf: http://127.0.0.1:5000")
+    print("Q-DAS DFQ zu Excel Konverter v10.0 (Clean Code)")
     print("="*60)
+    print(f"Server läuft auf: http://127.0.0.1:5000")
+    print("Drücken Sie STRG+C, um den Server zu beenden.")
+    print("="*60)
+    # debug=False ist für den "Produktionsbetrieb" besser, debug=True für die Entwicklung.
     app.run(debug=False, host='0.0.0.0', port=5000)
