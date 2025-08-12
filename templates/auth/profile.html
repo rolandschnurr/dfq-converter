@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benutzerprofil - Q-DAS DFQ Konverter</title>
+    <style>
+        /* ================================================================== */
+        /* GLOBALE STYLES - Konsistent mit der Haupt-App                    */
+        /* ================================================================== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        /* ================================================================== */
+        /* CONTAINER UND LAYOUT                                              */
+        /* ================================================================== */
+        .profile-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .profile-header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #e1e5e9;
+        }
+        
+        .profile-avatar {
+            width: 120px;
+            height: 120px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3em;
+            color: white;
+            margin: 0 auto 20px;
+            border: 4px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+        
+        .profile-title {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        
+        .profile-subtitle {
+            color: #666;
+            font-size: 1.2em;
+        }
+        
+        /* ================================================================== */
+        /* PROFIL-INFORMATIONEN                                              */
+        /* ================================================================== */
+        .profile-info {
+            margin-bottom: 40px;
+        }
+        
+        .info-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 25px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .info-section h3 {
+            color: #333;
+            font-size: 1.4em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .info-section h3::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background: #667eea;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .info-value {
+            font-size: 1.1em;
+            color: #333;
+            padding: 10px 15px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e1e5e9;
+        }
+        
+        .info-value.highlight {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: 600;
+        }
+        
+        /* ================================================================== */
+        /* STATISTIKEN UND BADGES                                            */
+        /* ================================================================== */
+        .stats-section {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 25px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-3px);
+        }
+        
+        .stat-icon {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* ================================================================== */
+        /* AKTIONS-BUTTONS                                                   */
+        /* ================================================================== */
+        .actions-section {
+            text-align: center;
+            margin-top: 40px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 15px 30px;
+            margin: 10px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: white;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        /* ================================================================== */
+        /* FLASH-NACHRICHTEN                                                 */
+        /* ================================================================== */
+        .flash-messages {
+            margin-bottom: 30px;
+        }
+        
+        .flash-message {
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            font-weight: 500;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+        }
+        
+        .flash-message::before {
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+        
+        .flash-message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border-left-color: #28a745;
+        }
+        
+        .flash-message.success::before {
+            content: '✅';
+        }
+        
+        .flash-message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-left-color: #dc3545;
+        }
+        
+        .flash-message.error::before {
+            content: '❌';
+        }
+        
+        .flash-message.warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border-left-color: #ffc107;
+        }
+        
+        .flash-message.warning::before {
+            content: '⚠️';
+        }
+        
+        .flash-message.info {
+            background-color: #cce7ff;
+            color: #004085;
+            border-left-color: #007bff;
+        }
+        
+        .flash-message.info::before {
+            content: 'ℹ️';
+        }
+        
+        /* ================================================================== */
+        /* RESPONSIVE DESIGN                                                 */
+        /* ================================================================== */
+        @media (max-width: 768px) {
+            .profile-container {
+                padding: 25px 20px;
+                margin: 10px;
+            }
+            
+            .profile-title {
+                font-size: 2em;
+            }
+            
+            .profile-avatar {
+                width: 100px;
+                height: 100px;
+                font-size: 2.5em;
+            }
+            
+            .info-grid, .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn {
+                display: block;
+                width: 100%;
+                margin: 10px 0;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .profile-container {
+                padding: 20px 15px;
+            }
+            
+            .profile-title {
+                font-size: 1.8em;
+            }
+            
+            .info-section, .stats-section {
+                padding: 20px;
+            }
+        }
+        
+        /* ================================================================== */
+        /* ANIMATIONEN                                                       */
+        /* ================================================================== */
+        .profile-container {
+            animation: slideInUp 0.6s ease-out;
+        }
+        
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .info-section, .stats-section {
+            animation: fadeIn 0.8s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="profile-container">
+        <!-- Flash-Nachrichten für Benutzer-Feedback -->
+        {% if get_flashed_messages() %}
+        <div class="flash-messages">
+            {% for category, message in get_flashed_messages(with_categories=true) %}
+            <div class="flash-message {{ category }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <!-- Profil-Header -->
+        <div class="profile-header">
+            <div class="profile-avatar">
+                👤
+            </div>
+            <h1 class="profile-title">{{ user.username }}</h1>
+            <p class="profile-subtitle">Benutzerprofil</p>
+        </div>
+        
+        <!-- Benutzerinformationen -->
+        <div class="profile-info">
+            <div class="info-section">
+                <h3>📋 Kontoinformationen</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Benutzername</div>
+                        <div class="info-value highlight">{{ user.username }}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">E-Mail-Adresse</div>
+                        <div class="info-value">{{ user.email }}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Registriert seit</div>
+                        <div class="info-value">
+                            {% if user.created_at %}
+                                {{ user.created_at[:10] }} 
+                                <small style="color: #666;">({{ user.created_at[11:19] }} Uhr)</small>
+                            {% else %}
+                                Unbekannt
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Letzter Login</div>
+                        <div class="info-value">
+                            {% if user.last_login %}
+                                {{ user.last_login[:10] }} 
+                                <small style="color: #666;">({{ user.last_login[11:19] }} Uhr)</small>
+                            {% else %}
+                                Noch nie
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Statistiken (Platzhalter für zukünftige Features) -->
+        <div class="stats-section">
+            <h3>📊 Nutzungsstatistiken</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📁</div>
+                    <div class="stat-number">-</div>
+                    <div class="stat-label">Dateien konvertiert</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⏱️</div>
+                    <div class="stat-number">-</div>
+                    <div class="stat-label">Sessions heute</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-number">-</div>
+                    <div class="stat-label">Letzte Aktivität</div>
+                </div>
+            </div>
+            <p style="text-align: center; margin-top: 20px; color: #666; font-style: italic;">
+                💡 Detaillierte Statistiken werden in einer zukünftigen Version verfügbar sein.
+            </p>
+        </div>
+        
+        <!-- Aktions-Buttons -->
+        <div class="actions-section">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                🏠 Zur Hauptanwendung
+            </a>
+            <a href="{{ url_for('auth.logout') }}" class="btn btn-secondary">
+                🚪 Abmelden
+            </a>
+        </div>
+    </div>
+    
+    <!-- JavaScript für erweiterte Funktionalität -->
+    <script>
+        // ================================================================
+        // PROFIL-FUNKTIONALITÄT UND ANIMATIONEN
+        // ================================================================
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Auto-hide Flash-Nachrichten nach 5 Sekunden
+            const flashMessages = document.querySelectorAll('.flash-message');
+            flashMessages.forEach(message => {
+                if (message.classList.contains('success') || message.classList.contains('info')) {
+                    setTimeout(() => {
+                        message.style.opacity = '0';
+                        message.style.transform = 'translateY(-10px)';
+                        setTimeout(() => {
+                            message.style.display = 'none';
+                        }, 300);
+                    }, 5000);
+                }
+            });
+            
+            // Hover-Effekte für Info-Sections
+            const infoSections = document.querySelectorAll('.info-section');
+            infoSections.forEach(section => {
+                section.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-2px)';
+                    this.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.1)';
+                });
+                
+                section.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0)';
+                    this.style.boxShadow = 'none';
+                });
+            });
+            
+            // Animierte Zahlen-Anzeige (für zukünftige Statistiken)
+            const statNumbers = document.querySelectorAll('.stat-number');
+            statNumbers.forEach(number => {
+                const value = number.textContent;
+                if (value !== '-' && !isNaN(value)) {
+                    animateNumber(number, 0, parseInt(value), 1000);
+                }
+            });
+            
+            // Avatar-Klick-Animation
+            const avatar = document.querySelector('.profile-avatar');
+            avatar.addEventListener('click', function() {
+                this.style.transform = 'scale(1.1) rotate(5deg)';
+                setTimeout(() => {
+                    this.style.transform = 'scale(1) rotate(0deg)';
+                }, 200);
+            });
+            
+            // Keyboard Shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Escape: Zurück zur Hauptanwendung
+                if (e.key === 'Escape') {
+                    window.location.href = "{{ url_for('index') }}";
+                }
+                
+                // Alt + L: Logout
+                if (e.altKey && e.key === 'l') {
+                    e.preventDefault();
+                    if (confirm('Möchten Sie sich wirklich abmelden?')) {
+                        window.location.href = "{{ url_for('auth.logout') }}";
+                    }
+                }
+            });
+        });
+        
+        // ================================================================
+        // HILFSFUNKTIONEN
+        // ================================================================
+        
+        function animateNumber(element, start, end, duration) {
+            const range = end - start;
+            const stepTime = Math.abs(Math.floor(duration / range));
+            
+            let current = start;
+            const timer = setInterval(() => {
+                current += range > 0 ? 1 : -1;
+                element.textContent = current;
+                
+                if (current === end) {
+                    clearInterval(timer);
+                }
+            }, stepTime);
+        }
+        
+        // ================================================================
+        // PROFIL-AKTIONEN (für zukünftige Erweiterungen)
+        // ================================================================
+        
+        function editProfile() {
+            alert('Profil-Bearbeitung wird in einer zukünftigen Version verfügbar sein.');
+        }
+        
+        function changePassword() {
+            alert('Passwort-Änderung wird in einer zukünftigen Version verfügbar sein.');
+        }
+        
+        function exportData() {
+            alert('Datenexport wird in einer zukünftigen Version verfügbar sein.');
+        }
+        
+        // ================================================================
+        // ACCESSIBILITY VERBESSERUNGEN
+        // ================================================================
+        
+        // Fokus-Management für bessere Tastaturnavigation
+        const focusableElements = document.querySelectorAll('a, button, [tabindex]');
+        focusableElements.forEach((element, index) => {
+            element.addEventListener('focus', function() {
+                this.style.outline = '2px solid #667eea';
+                this.style.outlineOffset = '2px';
+            });
+            
+            element.addEventListener('blur', function() {
+                this.style.outline = 'none';
+            });
+        });
+        
+        console.log('✅ Profil-Seite erfolgreich geladen');
+        console.log('🔧 Q-DAS DFQ Konverter - Benutzerprofil');
+        console.log('👤 Benutzer: {{ user.username }}');
+    </script>
+</body>
+</html>

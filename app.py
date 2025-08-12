@@ -34,6 +34,7 @@ Benötigte Dateien im selben Verzeichnis:
 import os
 import re
 import traceback
+import logging
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -58,6 +59,15 @@ K_FIELD_DEFINITION_FILE = "k_fields.txt"
 for folder in [app.config['UPLOAD_FOLDER'], app.config['DOWNLOAD_FOLDER']]:
     if not os.path.exists(folder):
         os.makedirs(folder)
+        
+logging.basicConfig(level=logging.DEBUG, 
+                   format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+logger.info("Server läuft auf: http://127.0.0.1:5000")
+logger.debug("Debug-Info")
+logger.info("Standard-Info") 
+logger.warning("Warnung")
+logger.error("Fehler")
 
 # ==============================================================================
 # 3. KONFIGURATIONS-LADEFUNKTION
@@ -179,7 +189,7 @@ def parse_file_content(lines, logs):
             i += 1
         # Alles andere wird als potenzielle Messwertzeile behandelt
         else:
-            result = parse_measurement_line(line, characteristics, measurement_event_id)
+            result = parse_measurement_line(line, characteristics, measurement_event_id, logs)
             if result:
                 measurements.extend(result)
                 measurement_event_id += 1  # Zähler nur erhöhen, wenn die Zeile erfolgreich war.
@@ -217,7 +227,7 @@ def parse_k_field(line, header_info, characteristics):
     except Exception:
         pass # Fehler leise ignorieren, um den Prozess nicht zu stoppen.
 
-def parse_measurement_line(line, characteristics, event_id):
+def parse_measurement_line(line, characteristics, event_id, logs):
     """
     Parst eine einzelne Messwertzeile. Erkennt automatisch verschiedene Formate.
     Gibt eine Liste von Messwert-Wörterbüchern zurück.
@@ -234,7 +244,7 @@ def parse_measurement_line(line, characteristics, event_id):
     # Einige Q-DAS-Systeme verwenden dieses nicht-druckbare Zeichen anstelle 
     # eines Leerzeichens als Trenner. Der Regex `[\s\x14]+` berücksichtigt beides.
     messdate_pattern = re.compile(
-        r'([-+]?\d+\.?\d*)'                                    # Gruppe 1: Der Messwert
+        r'([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)'
         r'[\s\x14]+'                                           # Trenner: Whitespace ODER DC4
         r'(\d+)'                                               # Gruppe 2: Das Attribut
         r'[\s\x14]+'                                           # Trenner: Whitespace ODER DC4
@@ -242,6 +252,7 @@ def parse_measurement_line(line, characteristics, event_id):
     )
     matches = messdate_pattern.findall(line)
     if matches:
+        logs.append(f"✅ MESSDATE-Format erkannt: {len(matches)} Messwerte gefunden\n")
         measurements = []
         for i, match_tuple in enumerate(matches):
             try:
@@ -254,6 +265,7 @@ def parse_measurement_line(line, characteristics, event_id):
                     'Event-ID': event_id, 'Wert': float(value_str), 'Attribut': int(attr_str),
                     'Zeitstempel': extract_timestamp(ts_str), 'Merkmal': merkmal_name
                 })
+                logs.append(f"✅ MESSDATE-Format erkannt: Event ID {event_id}, Wert {float(value_str)}\n")
             except (ValueError, IndexError):
                 continue
         if measurements:
@@ -263,6 +275,7 @@ def parse_measurement_line(line, characteristics, event_id):
     bosch_pattern = re.compile(r'^\s*([-+]?\d*\.?\d+[Ee][+-]?\d+)\s+(\d+)\s+(.*)')
     match = bosch_pattern.match(line)
     if match:
+        logs.append(f"✅ Bosch-Format erkannt: {len(match)} Messwerte gefunden\n")
         try:
             value_str, attr_str, rest = match.groups()
             # BOSCH-Format hat oft nur ein Merkmal pro Datei, daher Index 1.
@@ -421,7 +434,7 @@ def upload_files():
     
     elif len(successful) == 1:
         return jsonify({'success': True, 'download_url': f'/download/{successful[0]["excel_filename"]}', 'files_processed': 1, 'logs': logs})
-    
+    """Gibt die logs an den browser zurück - templates/index.html empfängt die logs."""
     return jsonify({'error': 'Unerwarteter Fehler nach der Verarbeitung.', 'logs': logs}), 500
 
 @app.route('/download/<filename>')
@@ -440,4 +453,4 @@ if __name__ == '__main__':
     print("Drücken Sie STRG+C, um den Server zu beenden.")
     print("="*60)
     # debug=False ist für den "Produktionsbetrieb" besser, debug=True für die Entwicklung.
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
